@@ -7,7 +7,7 @@ exception Unknown_character of char
 
 rule read = parse
   | [' ' '\t' '\n'] { read suivant }  (*On ignore les espaces récursivement *)
-  | ['0'-'9']+ as num { (* Explication rapide :  [0-9] intervalle des caractères en ASCII compris entre ces deux bornes, + <=> * en langage ( séquence >= 1 chiffre ) *)
+  | ['0'-'9']+ as num { (* Explication rapide :  [0-9] intervalle des caractères en ASCII compris entre ces deux bornes *)
 
       let value = int_of_string num in
       INT(value) (* Entrée : string, on stock la valeur pour ensuite la manipuler*)
