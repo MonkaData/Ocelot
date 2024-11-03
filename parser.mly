@@ -11,17 +11,13 @@
  */
 
 %{
-(* En-têtes OCaml *)
-(* 
-   Nous ouvrons le module Ast pour pouvoir utiliser les constructeurs de l'AST directement 
-   dans les actions des règles de grammaire.
-*)
+
 open Ast
 %}
 
 /* 
  * Déclaration des tokens que le lexer reconnaîtra.
- * Chaque token correspond à un élément de l'expression arithmétique.
+ * Chaque token correspond à un élément de l'expression
  */
 %token <int> INT           (* Représente un entier, par exemple 42 *)
 %token PLUS               (* Représente le symbole '+' *)
@@ -94,4 +90,4 @@ expr:
          sans ajouter de nœud supplémentaire à l'AST. *)
   | INT                    { Int $1 }
       (* Entier : un nombre entier, par exemple 42
-         L'action `{ Int $1 }` crée un nœud `Int` dans l'AST avec la valeur de l'entier. *)
+         L'action `{ Int $1 }` crée un noeud `Int` dans l'AST avec la valeur de l'entier. *)
