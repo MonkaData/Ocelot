@@ -17,5 +17,5 @@ rule read = parse
   | '*' { TIMES }
   | '/' { DIVIDE }
   | eof { EOF }
-  | _ as char { raise (Unknown_character char) (* cf l.6 *)
+  | _  { raise (Unknown_character) (* cf l.6 *)
 }
