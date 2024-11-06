@@ -6,7 +6,7 @@ exception Unknown_character of char
 }
 
 rule read = parse
-  | [' ' '\t' '\n'] { read suivant }  (*On ignore les espaces récursivement *)
+  | [' ' '\t' '\n'] { read lexbuf }  (*https://dev.realworldocaml.org/parsing-with-ocamllex-and-menhir.html*)
   | ['0'-'9']+ as num { (* Explication rapide :  [0-9] intervalle des caractères en ASCII compris entre ces deux bornes *)
 
       let value = int_of_string num in
