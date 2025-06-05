@@ -109,6 +109,35 @@ let apply_subst_env (subst : substitution) (env : env) : env =
       (x, Forall(vars, apply_subst subst t))
     ) env
 
+(* Inference for patterns. Returns a substitution, the type of the pattern and
+   an environment with bindings introduced by the pattern. *)
+let rec infer_pattern (pat : pattern) : substitution * typ * env =
+  match pat with
+  | PInt _ -> ([], TInt, [])
+  | PBool _ -> ([], TBool, [])
+  | PVar id ->
+      let tv = fresh_tyvar () in
+      ([], tv, [ (id, Forall ([], tv)) ])
+  | PWildcard ->
+      let tv = fresh_tyvar () in
+      ([], tv, [])
+  | PNil ->
+      let tv = fresh_tyvar () in
+      ([], TList tv, [])
+  | PCons (p1, p2) ->
+      let s1, t1, env1 = infer_pattern p1 in
+      let env1' = apply_subst_env s1 env1 in
+      let s2, t2, env2 = infer_pattern p2 in
+      let s12 = compose_subst s2 s1 in
+      let env2' = apply_subst_env s12 env2 in
+      let tv = fresh_tyvar () in
+      let s3 = unify (apply_subst s12 t2) (TList tv) in
+      let s123 = compose_subst s3 s12 in
+      let s4 = unify (apply_subst s123 t1) (apply_subst s123 tv) in
+      let s_final = compose_subst s4 s123 in
+      let env_final = env1' @ env2' in
+      (s_final, TList (apply_subst s_final tv), env_final)
+
 
 (* Algorithme W *)
 let rec w (env : env) (e : expr) : substitution * typ =
@@ -247,6 +276,32 @@ let rec w (env : env) (e : expr) : substitution * typ =
     let s7 = unify t_body TUnit in
     let s_final = compose_subst s7 s6 in
     (s_final, TUnit)
+  | Match (e_match, cases) ->
+    let s0, t_match = w env e_match in
+    let env0 = apply_subst_env s0 env in
+    let rec infer_cases s_acc t_acc cases =
+      match cases with
+      | [] -> (s_acc, match t_acc with None -> TUnit | Some t -> t)
+      | (pat, expr_case) :: rest ->
+          let s_pat, t_pat, env_pat = infer_pattern pat in
+          let s1 = compose_subst s_pat s_acc in
+          let s_un = unify (apply_subst s1 t_match) (apply_subst s1 t_pat) in
+          let s2 = compose_subst s_un s1 in
+          let env_case = env0 @ apply_subst_env s2 env_pat in
+          let s_e, t_e = w env_case expr_case in
+          let s3 = compose_subst s_e s2 in
+          let t_e = apply_subst s3 t_e in
+          let t_acc', s4 =
+            match t_acc with
+            | None -> Some t_e, s3
+            | Some t_prev ->
+                let s_eq = unify (apply_subst s3 t_prev) t_e in
+                let s4 = compose_subst s_eq s3 in
+                Some (apply_subst s4 t_prev), s4
+          in
+          infer_cases s4 t_acc' rest
+    in
+    infer_cases s0 None cases
   | Sequence exprs ->
     let rec infer_sequence env exprs =
       match exprs with
