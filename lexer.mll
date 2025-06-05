@@ -27,7 +27,9 @@
       ("true", TRUE);
       ("false", FALSE);
       ("rec", REC); (* Added rec to keyword table *)
-      ("and", AND)  (* Added and to keyword table, maps to the same AND token as && *)
+      ("and", AND);  (* Added and to keyword table, maps to the same AND token as && *)
+      ("match", MATCH);
+      ("with", WITH)
     ]
 }
 
@@ -38,11 +40,15 @@ rule token = parse
   | "->"                          { ARROW }
   | "&&"                          { AND }
   | "||"                          { OR }
+  | "|"                           { BAR }
   | "+"                           { PLUS }
   | "-"                           { MINUS }
   | "*"                           { TIMES }
   | "/"                           { DIV }
   | "mod"                         { MOD }
+  | "::"                          { CONS }
+  | "["                           { LBRACKET }
+  | "]"                           { RBRACKET }
   | ";"                           { SEMI }
   | "()"                          { IDENT "()" }
   | "done"                        { token lexbuf }  (* Ignorer le mot-clé "done" *)
