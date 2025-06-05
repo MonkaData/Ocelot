@@ -3,7 +3,8 @@
 open Ast
 open W
 
-(* … (les fonctions utilitaires string_of_c_type, string_of_binop, etc.) … *)
+  | TBool -> "bool"
+  | TList _ -> "int_list*"
 
 (* Traduction d'une expression OCaml en code C *)
 let rec translate_expr e is_expr level =
