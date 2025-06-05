@@ -43,6 +43,9 @@ rule token = parse
   | "*"                           { TIMES }
   | "/"                           { DIV }
   | "mod"                         { MOD }
+  | "::"                          { CONS }
+  | "["                           { LBRACKET }
+  | "]"                           { RBRACKET }
   | ";"                           { SEMI }
   | "()"                          { IDENT "()" }
   | "done"                        { token lexbuf }  (* Ignorer le mot-clé "done" *)

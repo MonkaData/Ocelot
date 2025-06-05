@@ -25,6 +25,8 @@ type expr =
   | Variable of ident
   | Binop of operateur_binaire * expr * expr
   | Unop of operateur_unaire * expr
+  | Liste of expr list                      (* [e1; e2; ...] list literals *)
+  | Cons of expr * expr                     (* e1 :: e2 *)
   | Si of expr * expr * expr option   (* Si condition alors expr1 [sinon expr2] *)
   | Let of bool * (ident * expr) list * expr (* let [rec] (id1 = expr1 and id2 = expr2 ...) in expr_in *)
   | Fonction of ident * expr            (* fonction anonyme : fun id -> expr *)
