@@ -107,7 +107,7 @@ and_expr:
   | and_expr AND cons_expr { Binop(Et, $1, $3) }
   | cons_expr { $1 }
 
-(* Gestion des comparaisons *)
+(* Gestion des comparaisons et du constructeur de liste (::) *)
 cons_expr:
   | cons_expr CONS equality_expr { Cons($1, $3) }
   | equality_expr { $1 }
@@ -151,13 +151,33 @@ primary_expr:
   | FALSE { Booleen(false) }
   | IDENT { Variable($1) }
   | LBRACKET expr_list RBRACKET { Liste($2) }
-(* List of expressions inside brackets *)
+
+(* Parser des listes d’expressions entre crochets *)
 expr_list:
   | { [] }
   | expr { [$1] }
   | expr SEMI expr_list { $1 :: $3 }
 
-(* Helper rule for parsing one or more bindings: id [params] = expr (AND id [params] = expr)* *)
+(* ----- SECTION PATTERN MATCHING ----- *)
+
+(* Cas pour le mot-clé MATCH ... WITH ... *)
+match_cases:
+  | match_case { [$1] }
+  | match_cases BAR match_case { $1 @ [$3] }
+
+match_case:
+  | pattern ARROW expr { ($1, $3) }
+
+pattern:
+  | ENTIER { PInt($1) }
+  | TRUE { PBool(true) }
+  | FALSE { PBool(false) }
+  | IDENT { if $1 = "_" then PWildcard else PVar($1) }
+  | LBRACKET RBRACKET { PNil }
+  | pattern CONS pattern { PCons($1, $3) }
+  | LPAREN pattern RPAREN { $2 }
+
+(* Helper rule for parsing one or more bindings : id [params] = expr (AND id [params] = expr)* *)
 bindings:
   | binding { [$1] }
   | bindings AND binding { $1 @ [$3] }
@@ -165,3 +185,5 @@ bindings:
 binding:
   | IDENT params EGAL expr { ($1, curry $2 $4) }
 %%
+
+(* Fin du fichier parser.mly *)
