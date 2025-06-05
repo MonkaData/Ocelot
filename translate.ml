@@ -45,6 +45,20 @@ let strip_outer_parens s =
     String.sub s 1 (String.length s - 2)
   else s
 
+(* Traduction d'un motif en condition C et éventuelles liaisons de variables. *)
+let rec translate_pattern pat value level : string * string =
+  match pat with
+  | PInt n -> (value ^ " == " ^ string_of_int n, "")
+  | PBool b -> (value ^ " == " ^ (if b then "true" else "false"), "")
+  | PWildcard -> ("true", "")
+  | PVar id -> ("true", indent level ("int " ^ id ^ " = " ^ value ^ ";\n"))
+  | PNil -> (value ^ " == NULL", "")
+  | PCons (p1, p2) ->
+      let cond_head, bind_head = translate_pattern p1 (value ^ "->value") (level+1) in
+      let cond_tail, bind_tail = translate_pattern p2 (value ^ "->next") (level+1) in
+      (value ^ " != NULL && " ^ cond_head ^ " && " ^ cond_tail,
+       bind_head ^ bind_tail)
+
 (* Traduction d'une expression OCaml en code C.
    Le paramètre [is_expr] indique si l'expression doit être traduite en tant qu'expression (par exemple pour un opérateur ternaire) ou en tant qu'instruction (/!\ non maintenu).
 *)
@@ -57,6 +71,14 @@ let rec translate_expr e is_expr level =
       "(" ^ translate_expr e1 true level ^ " " ^ string_of_binop op ^ " " ^ translate_expr e2 true level ^ ")"
   | Unop (op, e1) ->
       string_of_unop op ^ translate_expr e1 true level
+  | Liste elems ->
+      let rec build = function
+        | [] -> "NULL"
+        | h :: t -> "cons_int(" ^ translate_expr h true level ^ ", " ^ build t ^ ")"
+      in
+      build elems
+  | Cons (e1, e2) ->
+      "cons_int(" ^ translate_expr e1 true level ^ ", " ^ translate_expr e2 true level ^ ")"
   | Si (cond, e_then, None) ->
       if is_expr then
         "(( " ^ translate_expr cond true level ^ " ) ? " ^ translate_expr e_then true level ^ " : 0)"
@@ -82,6 +104,23 @@ let rec translate_expr e is_expr level =
                     x ^ " <= " ^ translate_expr e2 true level ^ "; " ^ x ^ "++) {\n" ^
                     translate_expr body false (level+1) ^ "\n" ^
                     indent level "}")
+  | Match (e_match, cases) ->
+      let temp = "__match" ^ string_of_int level in
+      let value_code = translate_expr e_match true level in
+      let rec build cases =
+        match cases with
+        | [] -> indent (level+1) "/* match failure */"
+        | (pat, expr) :: rest ->
+            let cond, binds = translate_pattern pat temp (level+2) in
+            let body = translate_expr expr false (level+2) in
+            let branch =
+              indent (level+1) ("if (" ^ cond ^ ") {\n" ^ binds ^ body ^ "\n" ^ indent (level+1) "}")
+            in
+            if rest = [] then branch
+            else branch ^ " else\n" ^ build rest
+      in
+      indent level ("{\n" ^ indent (level+1) ("int_list* " ^ temp ^ " = " ^ value_code ^ ";\n") ^
+                    build cases ^ "\n" ^ indent level "}")
   | Let (is_recursive, bindings, expr_in_ocaml) ->
       if is_recursive then
         (* Handle 'let rec (f1 = def1 and f2 = def2 ...) in expr_in_ocaml' *)
@@ -152,7 +191,8 @@ let build_global_env functions =
 let translate_function global_env f =
   if f.nom = "()" then ""
   else
-    let env_params = List.map (fun x -> (x, Forall ([], TInt))) f.params in
+    let param_tvs = List.map (fun x -> (x, W.fresh_tyvar ())) f.params in
+    let env_params = List.map (fun (x, tv) -> (x, Forall ([], tv))) param_tvs in
     let env = global_env @ env_params in
     let s, body_type = W.w env f.corps in
     let inferred_body_type = W.apply_subst s body_type in
@@ -160,11 +200,19 @@ let translate_function global_env f =
       | TInt -> "int"
       | TBool -> "bool"
       | TUnit -> "void"
+      | TList _ -> "int_list*"
       | _ -> "int"
     in
     let params_str =
       if f.params = [] then "void"
-      else String.concat ", " (List.map (fun x -> "int " ^ x) f.params)
+      else
+        param_tvs
+        |> List.map (fun (x, tv) ->
+               match W.apply_subst s tv with
+               | TBool -> "bool " ^ x
+               | TList _ -> "int_list* " ^ x
+               | _ -> "int " ^ x)
+        |> String.concat ", "
     in
     let body_code_raw = translate_expr f.corps false 1 in
     let body_code =
@@ -183,7 +231,7 @@ let translate_main e =
 
 (* Traduction d'un programme (liste de fonctions globales et bloc principal) en code C complet *)
 let translate_program functions main_expr =
-  let header = "#include <stdio.h>\n#include <stdbool.h>\n\n" in
+  let header = "#include <stdio.h>\n#include <stdbool.h>\n#include <stdlib.h>\n\ntypedef struct int_list { int value; struct int_list* next; } int_list;\nint_list* cons_int(int v, int_list* next) { int_list* node = malloc(sizeof(int_list)); node->value = v; node->next = next; return node; }\n\n" in
   let global_env = build_global_env functions in
   let funcs =
     List.filter (fun f -> f.nom <> "()") functions 

@@ -1,12 +1,28 @@
-let test1 x = if x = 1 then true else false
+let rec length l =
+  match l with
+  [] -> 0
+  | _ :: t -> 1 + length t
 
-let test2 x = if test1 x then 0 else 1
+let rec bubble_once l =
+  match l with
+  [] -> []
+  | x :: [] -> x :: []
+  | x :: y :: rest ->
+      if x > y then y :: bubble_once (x :: rest)
+      else x :: bubble_once (y :: rest)
 
-let () = 
-  let j = 5 in 
-  for i = 0 to j do 
-    print_int (test1 i)
-  done; 
-  while true do 
-    print_int (test2 (test2 1))
-  done
+let rec bubble_aux l n =
+  match n with
+  0 -> l
+  | _ -> bubble_aux (bubble_once l) (n - 1)
+
+let bubble_sort l =
+  bubble_aux l (length l)
+
+let print_head l =
+  match l with
+  [] -> ()
+  | x :: _ -> print_int x
+
+let () =
+  print_head (bubble_sort [5; 3; 1; 4; 2])
