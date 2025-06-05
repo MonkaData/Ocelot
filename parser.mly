@@ -19,7 +19,7 @@ let rec curry params body =
 (* Déclaration des tokens *)
 %token <int> ENTIER
 %token <string> IDENT
-%token LET REC IN IF THEN ELSE WHILE FOR DO TO FUNCTION NOT AND (* Added REC, AND is already here *)
+%token LET REC IN IF THEN ELSE WHILE FOR DO TO FUNCTION NOT AND MATCH WITH BAR
 %token PLUS MINUS TIMES DIV MOD (* AND *) OR SUPEGAL INFEGAL SUP INF SEMI LPAREN RPAREN
 %token LBRACKET RBRACKET CONS
 %token TRUE FALSE
@@ -44,6 +44,9 @@ let rec curry params body =
 %type <Ast.expr> app_expr
 %type <Ast.expr> primary_expr
 %type <Ast.expr list> expr_list
+%type <Ast.pattern> pattern
+%type <(Ast.pattern * Ast.expr) list> match_cases
+%type <Ast.pattern * Ast.expr> match_case
 %type <Ast.ident list> params
 
 %%
@@ -91,6 +94,7 @@ expr:
   | WHILE expr DO expr { TantQue($2, $4) }
   | FOR IDENT EGAL expr TO expr DO expr { Pour($2, $4, $6, $8) }
   | FUNCTION IDENT ARROW expr { Fonction($2, $4) }
+  | MATCH expr WITH match_cases { Match($2, $4) }
   | logical_expr { $1 }
 
 (* Gestion des opérations logiques, avec OU de plus faible priorité *)
@@ -147,7 +151,6 @@ primary_expr:
   | FALSE { Booleen(false) }
   | IDENT { Variable($1) }
   | LBRACKET expr_list RBRACKET { Liste($2) }
-
 (* List of expressions inside brackets *)
 expr_list:
   | { [] }

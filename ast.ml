@@ -19,6 +19,15 @@ type operateur_binaire =
 type operateur_unaire =
   | Non
 
+(* Motifs pour le pattern matching *)
+type pattern =
+  | PInt of int
+  | PBool of bool
+  | PVar of ident
+  | PWildcard
+  | PNil
+  | PCons of pattern * pattern
+
 type expr =
   | Entier of int
   | Booleen of bool
@@ -34,6 +43,7 @@ type expr =
   | TantQue of expr * expr              (* while condition do expr *)
   | Pour of ident * expr * expr * expr   (* for id = expr1 to expr2 do expr *)
   | Sequence of expr list               (* séquence d'expressions séparées par ";" *)
+  | Match of expr * (pattern * expr) list  (* match expr with ... *)
 
 type fonction = {
   nom : ident;

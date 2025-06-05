@@ -45,6 +45,20 @@ let strip_outer_parens s =
     String.sub s 1 (String.length s - 2)
   else s
 
+(* Traduction d'un motif en condition C et éventuelles liaisons de variables. *)
+let rec translate_pattern pat value level : string * string =
+  match pat with
+  | PInt n -> (value ^ " == " ^ string_of_int n, "")
+  | PBool b -> (value ^ " == " ^ (if b then "true" else "false"), "")
+  | PWildcard -> ("true", "")
+  | PVar id -> ("true", indent level ("int " ^ id ^ " = " ^ value ^ ";\n"))
+  | PNil -> (value ^ " == NULL", "")
+  | PCons (p1, p2) ->
+      let cond_head, bind_head = translate_pattern p1 (value ^ "->value") (level+1) in
+      let cond_tail, bind_tail = translate_pattern p2 (value ^ "->next") (level+1) in
+      (value ^ " != NULL && " ^ cond_head ^ " && " ^ cond_tail,
+       bind_head ^ bind_tail)
+
 (* Traduction d'une expression OCaml en code C.
    Le paramètre [is_expr] indique si l'expression doit être traduite en tant qu'expression (par exemple pour un opérateur ternaire) ou en tant qu'instruction (/!\ non maintenu).
 *)
@@ -90,6 +104,23 @@ let rec translate_expr e is_expr level =
                     x ^ " <= " ^ translate_expr e2 true level ^ "; " ^ x ^ "++) {\n" ^
                     translate_expr body false (level+1) ^ "\n" ^
                     indent level "}")
+  | Match (e_match, cases) ->
+      let temp = "__match" ^ string_of_int level in
+      let value_code = translate_expr e_match true level in
+      let rec build cases =
+        match cases with
+        | [] -> indent (level+1) "/* match failure */"
+        | (pat, expr) :: rest ->
+            let cond, binds = translate_pattern pat temp (level+2) in
+            let body = translate_expr expr false (level+2) in
+            let branch =
+              indent (level+1) ("if (" ^ cond ^ ") {\n" ^ binds ^ body ^ "\n" ^ indent (level+1) "}")
+            in
+            if rest = [] then branch
+            else branch ^ " else\n" ^ build rest
+      in
+      indent level ("{\n" ^ indent (level+1) ("int_list* " ^ temp ^ " = " ^ value_code ^ ";\n") ^
+                    build cases ^ "\n" ^ indent level "}")
   | Let (is_recursive, bindings, expr_in_ocaml) ->
       if is_recursive then
         (* Handle 'let rec (f1 = def1 and f2 = def2 ...) in expr_in_ocaml' *)
