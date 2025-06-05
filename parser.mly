@@ -1,4 +1,4 @@
-/* parser.mly */
+(* parser.mly *)
 %{
 open Ast
 
@@ -9,23 +9,42 @@ let rec curry params body =
   | p :: ps -> Fonction(p, curry ps body)
 %}
 
-/* Pour lever le problème du "dangling else" :
+(* Pour lever le problème du "dangling else" :
    la production SI ... ALORS ... sans SINON a une précédence inférieure (INFERIEUR_A_SINON)
-   afin que le SINON éventuel se lie toujours au SI le plus proche. */
+   afin que le SINON éventuel se lie toujours au SI le plus proche. *)
 %nonassoc INFERIEUR_A_SINON
 %nonassoc ELSE
+%right CONS
 
-/* Déclaration des tokens */
+(* Déclaration des tokens *)
 %token <int> ENTIER
 %token <string> IDENT
 %token LET REC IN IF THEN ELSE WHILE FOR DO TO FUNCTION NOT AND (* Added REC, AND is already here *)
 %token PLUS MINUS TIMES DIV MOD (* AND *) OR SUPEGAL INFEGAL SUP INF SEMI LPAREN RPAREN
+%token LBRACKET RBRACKET CONS
 %token TRUE FALSE
 %token EGAL ARROW
 %token EOF
 
 %start programme
 %type <Ast.fonction list> programme
+%type <Ast.fonction list> fonctions
+%type <Ast.fonction list> toplevel_bindings_list
+%type <Ast.fonction> toplevel_binding
+%type <(Ast.ident * Ast.expr) list> bindings
+%type <Ast.ident * Ast.expr> binding
+%type <Ast.expr> expr
+%type <Ast.expr> expr_seq
+%type <Ast.expr> logical_expr
+%type <Ast.expr> and_expr
+%type <Ast.expr> equality_expr
+%type <Ast.expr> additive_expr
+%type <Ast.expr> multiplicative_expr
+%type <Ast.expr> unary_expr
+%type <Ast.expr> app_expr
+%type <Ast.expr> primary_expr
+%type <Ast.expr list> expr_list
+%type <Ast.ident list> params
 
 %%
 
@@ -34,13 +53,9 @@ programme:
 
 (* Définition d'une liste (possiblement vide) de fonctions globales *)
 fonctions:
-  | { [] }
-  | fonctions funktion_group { $1 @ $2 } (* funktion_group returns Ast.fonction list *)
-
-(* A group of one or more top-level function definitions, possibly recursive *)
-funktion_group:
-  | LET toplevel_bindings_list { $2 }
-  | LET REC toplevel_bindings_list { $2 }
+  | { ([] : Ast.fonction list) }
+  | fonctions LET toplevel_bindings_list { $1 @ $3 }
+  | fonctions LET REC toplevel_bindings_list { $1 @ $4 }
 
 (* A list of one or more 'ident [params] = expr_seq' bindings, separated by AND *)
 toplevel_bindings_list:
@@ -71,7 +86,6 @@ expr_seq:
    la condition (avec dangling else), les boucles, la définition de fonctions anonymes, ainsi que les opérations. *)
 expr:
   | LET bindings IN expr { Let(false, $2, $4) }
-  | LET REC bindings IN expr { Let(true, $2, $5) }
   | IF expr THEN expr %prec INFERIEUR_A_SINON { Si($2, $4, None) }
   | IF expr THEN expr ELSE expr { Si($2, $4, Some $6) }
   | WHILE expr DO expr { TantQue($2, $4) }
@@ -86,10 +100,14 @@ logical_expr:
 
 (* Gestion de l'opérateur ET *)
 and_expr:
-  | and_expr AND equality_expr { Binop(Et, $1, $3) }
-  | equality_expr { $1 }
+  | and_expr AND cons_expr { Binop(Et, $1, $3) }
+  | cons_expr { $1 }
 
 (* Gestion des comparaisons *)
+cons_expr:
+  | cons_expr CONS equality_expr { Cons($1, $3) }
+  | equality_expr { $1 }
+
 equality_expr:
   | equality_expr EGAL additive_expr { Binop(Egal, $1, $3) }
   | equality_expr SUP additive_expr { Binop(Sup, $1, $3) }
@@ -128,8 +146,15 @@ primary_expr:
   | TRUE { Booleen(true) }
   | FALSE { Booleen(false) }
   | IDENT { Variable($1) }
+  | LBRACKET expr_list RBRACKET { Liste($2) }
 
-/* Helper rule for parsing one or more bindings: id [params] = expr (AND id [params] = expr)* */
+(* List of expressions inside brackets *)
+expr_list:
+  | { [] }
+  | expr { [$1] }
+  | expr SEMI expr_list { $1 :: $3 }
+
+(* Helper rule for parsing one or more bindings: id [params] = expr (AND id [params] = expr)* *)
 bindings:
   | binding { [$1] }
   | bindings AND binding { $1 @ [$3] }
