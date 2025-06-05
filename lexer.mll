@@ -1,21 +1,74 @@
 {
-(*faudrait open Parser mais y'en a pas encore : ( *) 
+  open Parser
+  open Lexing
 
-(* Exception pour les caractères inconnus *)
-exception Unknown_character of char
+  (* Fonction utilitaire pour afficher la position dans le fichier *)
+  let print_position lexbuf =
+    let pos = lexbuf.lex_curr_p in
+    Printf.sprintf "ligne %d, colonne %d" pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
+
+  (* Table de hachage pour distinguer les mots-clés des identifiants généraux *)
+  let keyword_table = Hashtbl.create 17
+
+  let () =
+    List.iter (fun (kw, tok) ->
+      Hashtbl.add keyword_table kw tok)
+    [ ("let", LET);
+      ("in", IN);
+      ("if", IF);
+      ("then", THEN);
+      ("else", ELSE);
+      ("while", WHILE);
+      ("for", FOR);
+      ("do", DO);
+      ("to", TO);
+      ("function", FUNCTION);
+      ("not", NOT);
+      ("true", TRUE);
+      ("false", FALSE);
+      ("rec", REC); (* Added rec to keyword table *)
+      ("and", AND)  (* Added and to keyword table, maps to the same AND token as && *)
+    ]
 }
 
-rule read = parse
-  | [' ' '\t' '\n'] { read lexbuf }  (*https://dev.realworldocaml.org/parsing-with-ocamllex-and-menhir.html*)
-  | ['0'-'9']+ as num { (* Explication rapide :  [0-9] intervalle des caractères en ASCII compris entre ces deux bornes *)
+rule token = parse
+  | [' ' '\t' '\r' '\n']+         { token lexbuf }
+  (* "rec" is now handled by the keyword_table *)
+  | "(*"                          { comment 1 lexbuf }
+  | "->"                          { ARROW }
+  | "&&"                          { AND }
+  | "||"                          { OR }
+  | "+"                           { PLUS }
+  | "-"                           { MINUS }
+  | "*"                           { TIMES }
+  | "/"                           { DIV }
+  | "mod"                         { MOD }
+  | ";"                           { SEMI }
+  | "()"                          { IDENT "()" }
+  | "done"                        { token lexbuf }  (* Ignorer le mot-clé "done" *)
+  | "("                           { LPAREN }
+  | ")"                           { RPAREN }
+  | ">="                          { SUPEGAL }
+  | "<="                          { INFEGAL }
+  | ">"                           { SUP }
+  | "<"                           { INF }
+  | "="                           { EGAL }
+  | ['0'-'9']+ as num             { ENTIER (int_of_string num) }
+  | ['a'-'z' 'A'-'Z' '_']
+    ['a'-'z' 'A'-'Z' '0'-'9' '_']* as id
+                                  { 
+                                    try Hashtbl.find keyword_table id
+                                    with Not_found -> IDENT id
+                                  }
+  | eof                           { EOF }
+  | _ as c                        { failwith ("Erreur lexicale à " ^ (print_position lexbuf) ^
+                                        " : caractère inattendu " ^ (String.make 1 c)) }
 
-      let value = int_of_string num in
-      INT(value) (* Entrée : string, on stock la valeur pour ensuite la manipuler*)
-    }
-  | '+' { PLUS }
-  | '-' { MINUS }
-  | '*' { TIMES }
-  | '/' { DIVIDE }
-  | eof { EOF }
-  | _  { raise (Unknown_character) (* cf l.6 *)
-}
+and comment depth = parse
+  | "(*"                          { comment (depth + 1) lexbuf }
+  | "*)"                          {
+                                    if depth = 1 then token lexbuf
+                                    else comment (depth - 1) lexbuf
+                                  }
+  | eof                           { failwith ("Commentaire non terminé à " ^ (print_position lexbuf)) }
+  | _                             { comment depth lexbuf }
