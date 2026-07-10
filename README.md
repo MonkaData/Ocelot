@@ -1,33 +1,52 @@
-# Transpileur OCaml -> C
+# Ocelot
 
-Le transpileur supporte actuellement les types suivant :
-- int (entiers) 
-- bool (booléens) 
-- unit (ou void en C : fonctions qui ne renvoient rien)
+Transpileur expérimental **OCaml → C**.
 
-Le code OCaml doit être déclaré suivant les spécifications suivantes : 
+Ocelot traduit un sous-ensemble de programmes OCaml vers du code C compilable. Le projet est principalement orienté apprentissage et exploration de la construction d’un transpileur avec OCamllex et Menhir.
 
-- Des fonctions écrites sans spécification de type pour les paramètres
-- Une fonction main sous la forme ```let () = ...```
+## Fonctionnalités actuelles
 
-Les sous fonctions ne sont pour le moment pas prises en charge, tout comme les pattern matching.
+- types `int`, `bool` et `unit` ;
+- fonctions sans annotation de type sur les paramètres ;
+- point d’entrée sous la forme `let () = ...` ;
+- génération de code C pour les programmes pris en charge.
 
-# Utilisation
+Les fonctions imbriquées et le pattern matching ne sont pas encore gérés.
 
-Le transpileur utilise OCamlc, Ocamllex ainsi que Menhir.
+## Pré-requis
 
-On compile une première fois en utilisant le makefile : ```make``` ou ```make -f makefile.mak```
+- OCaml et `ocamlc` ;
+- OCamllex ;
+- Menhir ;
+- GNU Make.
 
-Des warning peuvent apparaître lors de la compilation, ne pas en tenir compte.
+## Utilisation
 
-On traduit ensuite un code écrit dans un fichier ```input.ml``` : ```./transpileur input.ml ```
+Compilez d’abord le projet :
 
-Vous trouverez un exemple de fichier dont la transpilation fonctionne dans ```exemple.ml```
+```bash
+make
+# ou
+make -f makefile.mak
+```
 
-# Nettoyage 
+Puis transpilez un fichier OCaml :
 
-Le makefile contient deux fonctions de nettoyage :
-- ```make clean``` ou ```make -f makefile.mak clean```, pour effacer uniquement les fichiers qui servent lors de la création de l'exécutable, et qui ne servent plus après (recommandé)
-- ```make distclean``` ou ```make -f makefile.mak distclean```, pour effacer tous les fichiers non essentiels à la création de l'exécutable
+```bash
+./transpileur input.ml
+```
 
-Tous les fichiers créés par le makefile sont stockés dans le dossier d'exécution : pour tout supprimer, il suffit de supprimer ce dossier.
+Un exemple fonctionnel est disponible dans `exemple.ml`.
+
+## Nettoyage
+
+```bash
+make clean
+make distclean
+```
+
+`clean` supprime les fichiers intermédiaires. `distclean` supprime également les fichiers générés non essentiels.
+
+## Statut
+
+Projet en développement : la grammaire et les constructions supportées sont volontairement limitées pour le moment.
