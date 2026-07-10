@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v6
+
+      - name: Installer OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.2"
+          dune-cache: true
+
+      - name: Installer les dépendances
+        run: opam install . --deps-only --with-test
+
+      - name: Compiler et tester Ocelot
+        run: opam exec -- dune runtest
+
+      - name: Transpiler le scénario d'intégration
+        run: opam exec -- dune exec ocelot -- tests/integration.ml -o integration.c
+
+      - name: Compiler le C généré
+        run: cc -std=c11 -Wall -Wextra -Werror integration.c -o integration
+
+      - name: Vérifier le résultat du programme
+        run: |
+          ./integration > integration.actual
+          diff -u tests/integration.expected integration.actual
+
+      - name: Vérifier le rejet d'un programme mal typé
+        run: |
+          if opam exec -- dune exec ocelot -- tests/invalid_type.ml -o invalid.c; then
+            echo "Le transpileur aurait dû rejeter le programme" >&2
+            exit 1
+          fi
+          test ! -e invalid.c

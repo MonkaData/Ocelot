@@ -1,0 +1,18 @@
+opam-version: "2.0"
+synopsis: "Transpileur d'un sous-ensemble OCaml vers C11"
+description: "Ocelot analyse, type et traduit un sous-ensemble fonctionnel d'OCaml vers du C11 portable."
+maintainer: "MonkaData <modztiger1@gmail.com>"
+authors: "MonkaData <modztiger1@gmail.com>"
+license: "MIT"
+homepage: "https://github.com/MonkaData/Ocelot"
+bug-reports: "https://github.com/MonkaData/Ocelot/issues"
+dev-repo: "git+https://github.com/MonkaData/Ocelot.git"
+depends: [
+  "ocaml" {>= "4.13"}
+  "dune" {>= "3.12"}
+  "menhir" {>= "20220210"}
+]
+build: [
+  ["dune" "subst"] {dev}
+  ["dune" "build" "-p" name "-j" jobs]
+]

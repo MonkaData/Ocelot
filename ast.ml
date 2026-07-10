@@ -31,6 +31,7 @@ type pattern =
 type expr =
   | Entier of int
   | Booleen of bool
+  | Unite
   | Variable of ident
   | Binop of operateur_binaire * expr * expr
   | Unop of operateur_unaire * expr

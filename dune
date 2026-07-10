@@ -1,0 +1,16 @@
+(menhir
+ (modules parser)
+ (flags --explain --strict))
+
+(ocamllex lexer)
+
+(library
+ (name ocelot_lib)
+ (wrapped false)
+ (modules ast w parser lexer translate))
+
+(executable
+ (name main)
+ (public_name ocelot)
+ (modules main)
+ (libraries ocelot_lib))

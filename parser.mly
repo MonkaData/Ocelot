@@ -1,221 +1,152 @@
-(* parser.mly *)
 %{
 open Ast
 
-(* Transforme une liste de paramètres en fonction "currisée" *)
 let rec curry params body =
   match params with
   | [] -> body
-  | p :: ps -> Fonction(p, curry ps body)
+  | param :: rest -> Fonction (param, curry rest body)
 %}
 
-(* Pour lever le problème du "dangling else" :
-   la production SI ... ALORS ... sans SINON a une précédence inférieure (INFERIEUR_A_SINON)
-   afin que le SINON éventuel se lie toujours au SI le plus proche. *)
-%nonassoc INFERIEUR_A_SINON
-%nonassoc ELSE
-%right CONS
-
-(* Déclaration des tokens *)
 %token <int> ENTIER
 %token <string> IDENT
-%token LET REC IN IF THEN ELSE WHILE FOR DO TO FUNCTION NOT AND MATCH WITH BAR
-%token PLUS MINUS TIMES DIV MOD (* AND *) OR SUPEGAL INFEGAL SUP INF SEMI LPAREN RPAREN
+%token LET REC IN IF THEN ELSE WHILE FOR DO DONE TO FUNCTION NOT
+%token AND LAND OR MATCH WITH BAR
+%token PLUS MINUS TIMES DIV MOD SUPEGAL INFEGAL SUP INF SEMI LPAREN RPAREN
 %token LBRACKET RBRACKET CONS
-%token TRUE FALSE
-%token EGAL ARROW
-%token EOF
+%token TRUE FALSE UNIT EGAL ARROW EOF
+
+%nonassoc LOWER_THAN_ELSE
+%nonassoc ELSE
+%nonassoc LOWER_THAN_SEMI
+%right SEMI
+%nonassoc LOWER_THAN_BAR
+%right BAR
 
 %start programme
 %type <Ast.fonction list> programme
-%type <Ast.fonction list> fonctions
-%type <Ast.fonction list> toplevel_bindings_list
-%type <Ast.fonction> toplevel_binding
-%type <(Ast.ident * Ast.expr) list> bindings
-%type <Ast.ident * Ast.expr> binding
-%type <Ast.expr> expr
-%type <Ast.expr> expr_seq
-%type <Ast.expr> logical_expr
-%type <Ast.expr> and_expr
-%type <Ast.expr> equality_expr
-%type <Ast.expr> additive_expr
-%type <Ast.expr> multiplicative_expr
-%type <Ast.expr> unary_expr
-%type <Ast.expr> app_expr
-%type <Ast.expr> primary_expr
-%type <Ast.expr list> expr_list
-%type <Ast.pattern> pattern
-%type <(Ast.pattern * Ast.expr) list> match_cases
-%type <Ast.pattern * Ast.expr> match_case
-%type <Ast.ident list> params
 
 %%
 
 programme:
-  | fonctions EOF { $1 }
+  | fonctions EOF { List.rev $1 }
 
-(* Définition d'une liste (possiblement vide) de fonctions globales *)
 fonctions:
-  | { ([] : Ast.fonction list) }
-  | fonctions LET toplevel_bindings_list { $1 @ $3 }
-  | fonctions LET REC toplevel_bindings_list { $1 @ $4 }
+  | { [] }
+  | fonctions LET toplevel_bindings { List.rev_append $3 $1 }
+  | fonctions LET REC toplevel_bindings { List.rev_append $4 $1 }
 
-(* A list of one or more 'ident [params] = expr_seq' bindings, separated by AND *)
-toplevel_bindings_list:
+toplevel_bindings:
   | toplevel_binding { [$1] }
-  | toplevel_bindings_list AND toplevel_binding { $1 @ [$3] }
+  | toplevel_binding AND toplevel_bindings { $1 :: $3 }
 
-(* A single top-level function binding: f [params] = body *)
 toplevel_binding:
   | IDENT params EGAL expr_seq { { nom = $1; params = $2; corps = $4 } }
+  | UNIT EGAL expr_seq { { nom = "()"; params = []; corps = $3 } }
 
-(* Liste de paramètres d'une fonction *)
 params:
   | { [] }
   | IDENT params { $1 :: $2 }
 
-(* Une séquence d'expressions, séparées par ";".
-   On construit un nœud Sequence contenant la liste des expressions. *)
 expr_seq:
-  | expr { $1 }
-  | expr_seq SEMI expr {
-        match $1 with
-        | Sequence l -> Sequence (l @ [$3])
-        | e -> Sequence [e; $3]
+  | expr %prec LOWER_THAN_SEMI { $1 }
+  | expr SEMI expr_seq {
+      match $3 with
+      | Sequence rest -> Sequence ($1 :: rest)
+      | last -> Sequence [$1; last]
     }
 
-(* Les expressions.
-   On gère ici les liaisons locales (avec support pour des définitions avec paramètres via currification),
-   la condition (avec dangling else), les boucles, la définition de fonctions anonymes, ainsi que les opérations. *)
 expr:
-  | LET bindings IN expr { Let(false, $2, $4) }
-  | IF expr THEN expr %prec INFERIEUR_A_SINON { Si($2, $4, None) }
-  | IF expr THEN expr ELSE expr { Si($2, $4, Some $6) }
-  | WHILE expr DO expr { TantQue($2, $4) }
-  | FOR IDENT EGAL expr TO expr DO expr { Pour($2, $4, $6, $8) }
-  | FUNCTION IDENT ARROW expr { Fonction($2, $4) }
-  | MATCH expr WITH match_cases { Match($2, $4) }
+  | LET bindings IN expr_seq { Let (false, $2, $4) }
+  | LET REC bindings IN expr_seq { Let (true, $3, $5) }
+  | IF expr THEN expr %prec LOWER_THAN_ELSE { Si ($2, $4, None) }
+  | IF expr THEN expr ELSE expr { Si ($2, $4, Some $6) }
+  | WHILE expr DO expr_seq DONE { TantQue ($2, $4) }
+  | FOR IDENT EGAL expr TO expr DO expr_seq DONE { Pour ($2, $4, $6, $8) }
+  | FUNCTION IDENT ARROW expr { Fonction ($2, $4) }
+  | MATCH expr WITH optional_bar match_cases { Match ($2, $5) }
   | logical_expr { $1 }
 
-(* Gestion des opérations logiques, avec OU de plus faible priorité *)
+optional_bar:
+  | { () }
+  | BAR { () }
+
 logical_expr:
-  | logical_expr OR and_expr { Binop(Ou, $1, $3) }
+  | logical_expr OR and_expr { Binop (Ou, $1, $3) }
   | and_expr { $1 }
 
-(* Gestion de l'opérateur ET *)
 and_expr:
-  | and_expr AND cons_expr { Binop(Et, $1, $3) }
+  | and_expr LAND cons_expr { Binop (Et, $1, $3) }
   | cons_expr { $1 }
 
-
-(* Gestion des comparaisons *)
 cons_expr:
-  | cons_expr CONS equality_expr { Cons($1, $3) }
+  | equality_expr CONS cons_expr { Cons ($1, $3) }
   | equality_expr { $1 }
-
-
-(* Gestion des comparaisons et du constructeur de liste (::) *)
-cons_expr:
-  | cons_expr CONS equality_expr { Cons($1, $3) }
-  | equality_expr { $1 }
-
 
 equality_expr:
-  | equality_expr EGAL additive_expr { Binop(Egal, $1, $3) }
-  | equality_expr SUP additive_expr { Binop(Sup, $1, $3) }
-  | equality_expr INF additive_expr { Binop(Inf, $1, $3) }
-  | equality_expr SUPEGAL additive_expr { Binop(Supegal, $1, $3) }
-  | equality_expr INFEGAL additive_expr { Binop(Infegal, $1, $3) }
+  | additive_expr EGAL additive_expr { Binop (Egal, $1, $3) }
+  | additive_expr SUP additive_expr { Binop (Sup, $1, $3) }
+  | additive_expr INF additive_expr { Binop (Inf, $1, $3) }
+  | additive_expr SUPEGAL additive_expr { Binop (Supegal, $1, $3) }
+  | additive_expr INFEGAL additive_expr { Binop (Infegal, $1, $3) }
   | additive_expr { $1 }
 
-(* Opérations additives (+ et -) *)
 additive_expr:
-  | additive_expr PLUS multiplicative_expr { Binop(Plus, $1, $3) }
-  | additive_expr MINUS multiplicative_expr { Binop(Moins, $1, $3) }
+  | additive_expr PLUS multiplicative_expr { Binop (Plus, $1, $3) }
+  | additive_expr MINUS multiplicative_expr { Binop (Moins, $1, $3) }
   | multiplicative_expr { $1 }
 
-(* Opérations multiplicatives (fois, /, mod) *)
 multiplicative_expr:
-  | multiplicative_expr TIMES unary_expr { Binop(Fois, $1, $3) }
-  | multiplicative_expr DIV unary_expr { Binop(Divise, $1, $3) }
-  | multiplicative_expr MOD unary_expr { Binop(Modulo, $1, $3) }
+  | multiplicative_expr TIMES unary_expr { Binop (Fois, $1, $3) }
+  | multiplicative_expr DIV unary_expr { Binop (Divise, $1, $3) }
+  | multiplicative_expr MOD unary_expr { Binop (Modulo, $1, $3) }
   | unary_expr { $1 }
 
-(* Opérations unaire (NON) et appels par juxtaposition *)
 unary_expr:
-  | NOT unary_expr { Unop(Non, $2) }
+  | NOT unary_expr { Unop (Non, $2) }
+  | MINUS unary_expr { Binop (Moins, Entier 0, $2) }
   | app_expr { $1 }
 
-(* Gestion des appels de fonction par juxtaposition *)
 app_expr:
-  | app_expr primary_expr { Application($1, $2) }
+  | app_expr primary_expr { Application ($1, $2) }
   | primary_expr { $1 }
 
-(* Expressions de base *)
 primary_expr:
-  | LPAREN expr RPAREN { $2 }
-  | ENTIER { Entier($1) }
-  | TRUE { Booleen(true) }
-  | FALSE { Booleen(false) }
-  | IDENT { Variable($1) }
-  | LBRACKET expr_list RBRACKET { Liste($2) }
-
-(* Pattern matching cases *)
-match_cases:
-  | match_case { [$1] }
-  | match_cases BAR match_case { $1 @ [$3] }
-
-match_case:
-  | pattern ARROW expr { ($1, $3) }
-
-pattern:
-  | ENTIER { PInt($1) }
-  | TRUE { PBool(true) }
-  | FALSE { PBool(false) }
-  | IDENT { if $1 = "_" then PWildcard else PVar($1) }
-  | LBRACKET RBRACKET { PNil }
-  | pattern CONS pattern { PCons($1, $3) }
-  | LPAREN pattern RPAREN { $2 }
-
-(* List of expressions inside brackets *)
-
-(* Parser des listes d’expressions entre crochets *)
+  | LPAREN expr_seq RPAREN { $2 }
+  | ENTIER { Entier $1 }
+  | TRUE { Booleen true }
+  | FALSE { Booleen false }
+  | UNIT { Unite }
+  | IDENT { Variable $1 }
+  | LBRACKET expr_list RBRACKET { Liste $2 }
 
 expr_list:
   | { [] }
   | expr { [$1] }
   | expr SEMI expr_list { $1 :: $3 }
 
-
-(* Helper rule for parsing one or more bindings: id [params] = expr (AND id [params] = expr)* *)
-
-(* ----- SECTION PATTERN MATCHING ----- *)
-
-(* Cas pour le mot-clé MATCH ... WITH ... *)
 match_cases:
-  | match_case { [$1] }
-  | match_cases BAR match_case { $1 @ [$3] }
+  | match_case %prec LOWER_THAN_BAR { [$1] }
+  | match_case BAR match_cases { $1 :: $3 }
 
 match_case:
-  | pattern ARROW expr { ($1, $3) }
+  | pattern ARROW expr_seq { ($1, $3) }
 
 pattern:
-  | ENTIER { PInt($1) }
-  | TRUE { PBool(true) }
-  | FALSE { PBool(false) }
-  | IDENT { if $1 = "_" then PWildcard else PVar($1) }
-  | LBRACKET RBRACKET { PNil }
-  | pattern CONS pattern { PCons($1, $3) }
-  | LPAREN pattern RPAREN { $2 }
+  | simple_pattern CONS pattern { PCons ($1, $3) }
+  | simple_pattern { $1 }
 
-(* Helper rule for parsing one or more bindings : id [params] = expr (AND id [params] = expr)* *)
+simple_pattern:
+  | ENTIER { PInt $1 }
+  | TRUE { PBool true }
+  | FALSE { PBool false }
+  | IDENT { if $1 = "_" then PWildcard else PVar $1 }
+  | LBRACKET RBRACKET { PNil }
+  | LPAREN pattern RPAREN { $2 }
 
 bindings:
   | binding { [$1] }
-  | bindings AND binding { $1 @ [$3] }
+  | binding AND bindings { $1 :: $3 }
 
 binding:
   | IDENT params EGAL expr { ($1, curry $2 $4) }
 %%
-
-(* Fin du fichier parser.mly *)

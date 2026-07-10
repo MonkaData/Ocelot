@@ -1,33 +1,79 @@
-(* main.ml *)
+let output_file = ref None
+let input_file = ref None
 
-open Lexing
+let usage = "Usage : ocelot [-o fichier.c] fichier.ml"
+
+let set_input filename =
+  match !input_file with
+  | None -> input_file := Some filename
+  | Some _ -> raise (Arg.Bad "un seul fichier source peut être transpilé")
+
+let options =
+  [ "-o", Arg.String (fun filename -> output_file := Some filename),
+    "fichier.c  Choisir le fichier C généré";
+    "--output", Arg.String (fun filename -> output_file := Some filename),
+    "fichier.c  Alias de -o";
+    "--version", Arg.Unit (fun () -> print_endline "Ocelot 0.2.0"; exit 0),
+    "           Afficher la version" ]
+
+let default_output filename =
+  try Filename.chop_extension filename ^ ".c"
+  with Invalid_argument _ -> filename ^ ".c"
+
+let absolute_path filename =
+  let path =
+    if Filename.is_relative filename then Filename.concat (Sys.getcwd ()) filename
+    else filename
+  in
+  String.lowercase_ascii path
+
+let parse filename =
+  let channel = open_in_bin filename in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr channel)
+    (fun () ->
+      let lexbuf = Lexing.from_channel channel in
+      lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
+      try Parser.programme Lexer.token lexbuf with
+      | Parser.Error ->
+          let position = lexbuf.lex_curr_p in
+          let column = position.pos_cnum - position.pos_bol + 1 in
+          raise
+            (Failure
+               (Printf.sprintf "%s:%d:%d: erreur de syntaxe"
+                  filename position.pos_lnum column)))
+
+let run () =
+  Arg.parse options set_input usage;
+  let input =
+    match !input_file with
+    | Some filename -> filename
+    | None -> raise (Arg.Bad "aucun fichier source fourni")
+  in
+  let output = Option.value !output_file ~default:(default_output input) in
+  if absolute_path input = absolute_path output then
+    raise (Arg.Bad "le fichier de sortie doit être différent du fichier source");
+  let functions = parse input in
+  Translate.write_c_file output functions;
+  Printf.printf "Fichier C généré : %s\n" output
 
 let () =
-  Printexc.record_backtrace true; (* Permet de suivre l'arbre d'exceptions levé *)
-  if Array.length Sys.argv < 2 then ( 
-    Printf.eprintf "Usage : %s <fichier_input.ml>\n" Sys.argv.(0);
-    exit 1
-  );
-  let input_file = Sys.argv.(1) in (* Lecture de la commande terminal *)
-  let ic = open_in input_file in
-  let lexbuf = Lexing.from_channel ic in
-  try
-    (* Analyse lexicale et syntaxique pour obtenir l'AST (liste de fonctions) *)
-    let functions = Parser.programme Lexer.token lexbuf in
-    close_in ic;
-    (* Traduction vers C en écrivant dans output.c *)
-    Translate.write_c_file "output.c" functions;
-    Printf.printf "Traduction terminée. Consultez output.c.\n"
-  with
-  | Parser.Error -> (*Erreur de parsing*)
-      let pos = lexbuf.lex_curr_p in
-      Printf.eprintf "Erreur de syntaxe au caractère %d\n"
-        (pos.pos_cnum - pos.pos_bol + 1);
+  try run () with
+  | Arg.Bad message ->
+      Printf.eprintf "%s\n%s\n" message usage;
+      exit 2
+  | Sys_error message ->
+      Printf.eprintf "Erreur d'entrée/sortie : %s\n" message;
       exit 1
-  | W.TypeError msg -> (* Erreur de typage *)
-      Printf.eprintf "Erreur de typage : %s\n" msg;
+  | Lexer.Error message ->
+      Printf.eprintf "Erreur lexicale : %s\n" message;
       exit 1
-  | e -> (* Autres erreur pouvant survenir (le plus souvent lors de la traduction dans translate.ml : plusieurs failwith y sont déclaré) *)
-      Printf.eprintf "Erreur inattendue : %s\n" (Printexc.to_string e);
-      Printexc.print_backtrace stderr;
+  | W.TypeError message ->
+      Printf.eprintf "Erreur de typage : %s\n" message;
+      exit 1
+  | Translate.Error message ->
+      Printf.eprintf "Erreur de traduction : %s\n" message;
+      exit 1
+  | Failure message ->
+      Printf.eprintf "%s\n" message;
       exit 1

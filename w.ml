@@ -1,14 +1,7 @@
-(* w.ml *)
-
 open Ast
 
 exception TypeError of string
 
-(* Fonctions auxiliaires sur les listes : union de listes sans doublons *)
-let union l1 l2 =
-  List.fold_left (fun acc x -> if List.mem x acc then acc else x :: acc) l1 l2
-
-(* Les types du langage *)
 type typ =
   | TInt
   | TBool
@@ -17,330 +10,386 @@ type typ =
   | TFun of typ * typ
   | TVar of int
 
-(* Facilite l'affichage *)
-let rec type_en_str t =
-  match t with
-  | TInt -> "int"
-  | TBool -> "bool"
-  | TUnit -> "unit"
-  | TList t' -> "list(" ^ (type_en_str t') ^ ")"
-  | TFun(t1, t2) -> "fun (" ^ (type_en_str t1) ^ ") (" ^ (type_en_str t2) ^ ")"
-  | TVar(i) -> "var : " ^ (string_of_int i)
-
-(* Un schéma de type, permettant la généralisation (let-polymorphisme) *)
 type scheme = Forall of int list * typ
-
-(* L'environnement de typage associe un identificateur à un schéma *)
 type env = (ident * scheme) list
-
-(* Une substitution est une liste d'associations d'une variable de type à un type *)
 type substitution = (int * typ) list
 
-(* Génération de nouvelles variables et identification *)
 let counter = ref 0
 let fresh_tyvar () =
-  let n = !counter in
-  counter := n + 1;
-  TVar n
+  let id = !counter in
+  incr counter;
+  TVar id
 
-(* Application d'une substitution à un type *)
-let rec apply_subst (subst : substitution) (t : typ) : typ =
-  match t with
-  | TInt | TBool | TUnit -> t
-  | TList t' -> TList (apply_subst subst t')
-  | TFun(t1, t2) -> TFun(apply_subst subst t1, apply_subst subst t2)
-  | TVar n ->
-    (try
-       let t' = List.assoc n subst in
-       apply_subst subst t'
-     with Not_found -> TVar n)
+let reset_fresh_vars () = counter := 0
 
-(* Composition de substitutions : (s1 o s2) applique d'abord s2 puis s1 *)
-let compose_subst s1 s2 =
-  let s2' = List.map (fun (n, t) -> (n, apply_subst s1 t)) s2 in
-  s2' @ s1
+let union left right =
+  List.fold_left
+    (fun result item -> if List.mem item result then result else item :: result)
+    left right
 
-(* Calcul des variables libres *)
-let rec ftv (t : typ) : int list =
-  match t with
-  | TInt | TBool | TUnit -> []
-  | TList t' -> ftv t'
-  | TFun(t1, t2) -> union (ftv t1) (ftv t2)
-  | TVar n -> [n]
-
-let ftv_scheme (Forall(vars, t)) =
-  List.filter (fun n -> not (List.mem n vars)) (ftv t)
-
-let ftv_env (env : env) =
-  List.fold_left (fun acc (_, sch) -> union acc (ftv_scheme sch)) [] env
-
-
-(* Généralisation et instanciation *)
-let generalize (env : env) (t : typ) : scheme =
-  let env_ftv = ftv_env env in
-  let vars = List.filter (fun n -> not (List.mem n env_ftv)) (ftv t) in
-  Forall(vars, t)
-
-let instantiate (Forall(vars, t) : scheme) : typ =
-  let subst = List.map (fun n -> (n, fresh_tyvar ())) vars in
-  apply_subst subst t
-
-
-(* Unification *)
-let rec unify t1 t2 : substitution =
-  match t1, t2 with
-  | TInt, TInt | TBool, TBool | TUnit, TUnit -> []
-  | TList t1', TList t2' -> unify t1' t2'
-  | TFun(l1, r1), TFun(l2, r2) ->
-    let s0 = unify l1 l2 in
-    let s1 = unify (apply_subst s0 r1) (apply_subst s0 r2) in
-    compose_subst s1 s0
-  | TVar n, t | t, TVar n ->
-    if t = TVar n then [] else
-    if List.mem n (ftv t) then raise (TypeError "Échec de l'occurs check")
-    else [(n, t)]
-  | _ -> raise (TypeError ("Types incompatibles lors de l'unification: " ^
-                             (type_en_str t1) ^ " et " ^ (type_en_str t2)))
-
-
-(* Application d'une substitution à l'environnement *)
-let apply_subst_env (subst : substitution) (env : env) : env =
-  List.map (fun (x, Forall(vars, t)) ->
-      (x, Forall(vars, apply_subst subst t))
-    ) env
-
-(* Inference for patterns. Returns a substitution, the type of the pattern and
-   an environment with bindings introduced by the pattern. *)
-let rec infer_pattern (pat : pattern) : substitution * typ * env =
-  match pat with
-  | PInt _ -> ([], TInt, [])
-  | PBool _ -> ([], TBool, [])
-  | PVar id ->
-      let tv = fresh_tyvar () in
-      ([], tv, [ (id, Forall ([], tv)) ])
-  | PWildcard ->
-      let tv = fresh_tyvar () in
-      ([], tv, [])
-  | PNil ->
-      let tv = fresh_tyvar () in
-      ([], TList tv, [])
-  | PCons (p1, p2) ->
-      let s1, t1, env1 = infer_pattern p1 in
-      let env1' = apply_subst_env s1 env1 in
-      let s2, t2, env2 = infer_pattern p2 in
-      let s12 = compose_subst s2 s1 in
-      let env2' = apply_subst_env s12 env2 in
-      let tv = fresh_tyvar () in
-      let s3 = unify (apply_subst s12 t2) (TList tv) in
-      let s123 = compose_subst s3 s12 in
-      let s4 = unify (apply_subst s123 t1) (apply_subst s123 tv) in
-      let s_final = compose_subst s4 s123 in
-      let env_final = env1' @ env2' in
-      (s_final, TList (apply_subst s_final tv), env_final)
-
-
-(* Algorithme W *)
-let rec w (env : env) (e : expr) : substitution * typ =
-  match e with
-  | Entier _ -> ([], TInt)
-  | Booleen _ -> ([], TBool)
-  | Variable x ->
-      if x = "print_int" then ([], TFun(TInt, TUnit))
-      else
-        (try
-           let sch = List.assoc x env in
-           ([], instantiate sch)
-         with Not_found ->
-           raise (TypeError ("Variable non déclarée: " ^ x)))
-  | Liste elems ->
-      let rec infer_elems acc_subst acc_type = function
-        | [] -> (acc_subst, acc_type)
-        | e1 :: rest ->
-            let s, t = w env e1 in
-            let s_all = compose_subst s acc_subst in
-            let t_elem = apply_subst s_all t in
-            (match acc_type with
-             | None -> infer_elems s_all (Some t_elem) rest
-             | Some t_prev ->
-                 let s_unify = unify t_prev t_elem in
-                 infer_elems (compose_subst s_unify s_all) (Some (apply_subst s_unify t_prev)) rest)
-      in
-      let s, t_opt = infer_elems [] None elems in
-      let elem_type = match t_opt with Some t -> t | None -> fresh_tyvar () in
-      (s, TList elem_type)
-  | Cons (e1, e2) ->
-      let s1, t1 = w env e1 in
-      let s2, t2 = w env e2 in
-      let s12 = compose_subst s2 s1 in
-      let tv = fresh_tyvar () in
-      let s3 = unify (apply_subst s12 t2) (TList tv) in
-      let s4 = compose_subst s3 s12 in
-      let s5 = unify (apply_subst s4 t1) (apply_subst s4 tv) in
-      let s_final = compose_subst s5 s4 in
-      (s_final, TList (apply_subst s_final tv))
-  | Binop (op, e1, e2) ->
-    begin match op with
-    | Plus | Moins | Fois | Divise | Modulo ->
-      let s0, t1 = w env e1 in
-      let s1, t2 = w env e2 in
-      let s_temp = compose_subst s1 s0 in
-      let s3 = unify (apply_subst s_temp t1) TInt in
-      let s4 = compose_subst s3 s_temp in
-      let s_temp2 = unify (apply_subst s4 t2) TInt in
-      let s_final = compose_subst s_temp2 s4 in
-      (s_final, TInt)
-    | Et | Ou ->
-      let s0, t1 = w env e1 in
-      let s1, t2 = w env e2 in
-      let s_temp = compose_subst s1 s0 in
-      let s3 = unify (apply_subst s_temp t1) TBool in
-      let s4 = compose_subst s3 s_temp in
-      let s_temp2 = unify (apply_subst s4 t2) TBool in
-      let s_final = compose_subst s_temp2 s4 in
-      (s_final, TBool)
-    | Inf | Sup | Infegal | Supegal | Egal ->
-      let s0, t1 = w env e1 in
-      let s1, t2 = w env e2 in
-      let s_temp = compose_subst s1 s0 in
-      let s3 = unify (apply_subst s_temp t1) TInt in
-      let s4 = compose_subst s3 s_temp in
-      let s_temp2 = unify (apply_subst s4 t2) TInt in
-      let s_final = compose_subst s_temp2 s4 in
-      (s_final, TBool)
-    end
-  | Unop (Non, e) ->
-    let s, t = w env e in
-    let s' = unify t TBool in
-    (compose_subst s' s, TBool)
-  | Si (cond, e_then, opt_e_else) ->
-    let s0, t_cond = w env cond in
-    let s1 = unify t_cond TBool in
-    let s2 = compose_subst s1 s0 in
-    let s3, t_then = w env e_then in
-    let s4 = compose_subst s3 s2 in
-    (match opt_e_else with
-     | Some e_else ->
-       let s5, t_else = w env e_else in
-       let s6 = compose_subst s5 s4 in
-       let s7 = unify (apply_subst s6 t_then) (apply_subst s6 t_else) in
-       let s_final = compose_subst s7 s6 in
-       (s_final, apply_subst s_final t_then)
-     | None ->
-       let s5 = unify (apply_subst s4 t_then) TUnit in
-       let s_final = compose_subst s5 s4 in
-       (s_final, TUnit))
-  | Let (is_rec, bindings, e2) ->
-    (* Traitement d'une ou plusieurs liaisons locales. La prise en charge
-       du "let rec" local est limitée : les liaisons sont simplement
-       ajoutées à l'environnement typé avant l'analyse du corps. *)
-    let process_binding (env_acc, subst_acc) (id, e1) =
-      let s, t = w env_acc e1 in
-      let env_after = apply_subst_env s env_acc in
-      let sch = generalize env_after t in
-      ((id, sch) :: env_after, compose_subst s subst_acc)
-    in
-    let env', s_bind = List.fold_left process_binding (env, []) bindings in
-    let s_body, t_body = w env' e2 in
-    (compose_subst s_body s_bind, t_body)
-  | Fonction (x, body) ->
-    let tv = fresh_tyvar () in
-    let env' = (x, Forall ([], tv)) :: env in
-    let s, t_body = w env' body in
-    (s, TFun(apply_subst s tv, t_body))
-  | Application (e1, e2) ->
-    let s0, t1 = w env e1 in
-    let env' = apply_subst_env s0 env in
-    let s1, t2 = w env' e2 in
-    let s2 = compose_subst s1 s0 in
-    let tv = fresh_tyvar () in
-    let s3 = unify (apply_subst s2 t1) (TFun(t2, tv)) in
-    let s_final = compose_subst s3 s2 in
-    (s_final, apply_subst s_final tv)
-  | TantQue (cond, body) ->
-    let s0, t_cond = w env cond in
-    let s1 = unify t_cond TBool in
-    let s2 = compose_subst s1 s0 in
-    let s3, t_body = w env body in
-    let s4 = unify t_body TUnit in
-    let s_final = compose_subst s4 s3 in
-    (s_final, TUnit)
-  | Pour (x, e1, e2, body) ->
-    let s0, t1 = w env e1 in
-    let s1 = unify t1 TInt in
-    let s2 = compose_subst s1 s0 in
-    let s3, t2 = w env e2 in
-    let s4 = unify t2 TInt in
-    let s5 = compose_subst s4 s3 in
-    let env' = (x, Forall ([], TInt)) :: env in
-    let s6, t_body = w env' body in
-    let s7 = unify t_body TUnit in
-    let s_final = compose_subst s7 s6 in
-    (s_final, TUnit)
-  | Match (e_match, cases) ->
-    let s0, t_match = w env e_match in
-    let env0 = apply_subst_env s0 env in
-    let rec infer_cases s_acc t_acc cases =
-      match cases with
-      | [] -> (s_acc, match t_acc with None -> TUnit | Some t -> t)
-      | (pat, expr_case) :: rest ->
-          let s_pat, t_pat, env_pat = infer_pattern pat in
-          let s1 = compose_subst s_pat s_acc in
-          let s_un = unify (apply_subst s1 t_match) (apply_subst s1 t_pat) in
-          let s2 = compose_subst s_un s1 in
-          let env_case = env0 @ apply_subst_env s2 env_pat in
-          let s_e, t_e = w env_case expr_case in
-          let s3 = compose_subst s_e s2 in
-          let t_e = apply_subst s3 t_e in
-          let t_acc', s4 =
-            match t_acc with
-            | None -> Some t_e, s3
-            | Some t_prev ->
-                let s_eq = unify (apply_subst s3 t_prev) t_e in
-                let s4 = compose_subst s_eq s3 in
-                Some (apply_subst s4 t_prev), s4
-          in
-          infer_cases s4 t_acc' rest
-    in
-    infer_cases s0 None cases
-  | Sequence exprs ->
-    let rec infer_sequence env exprs =
-      match exprs with
-      | [] -> ([], TUnit)
-      | [e] -> w env e
-      | e :: es ->
-        let s0, _ = w env e in
-        let env' = apply_subst_env s0 env in
-        let s1, t_last = infer_sequence env' es in
-        (compose_subst s1 s0, t_last)
-    in
-    infer_sequence env exprs
-
-(* Fonctions d'affichage (pour le débogage) *)
-let rec string_of_typ t =
-  match t with
+let rec string_of_typ = function
   | TInt -> "int"
   | TBool -> "bool"
   | TUnit -> "unit"
-  | TList t' -> "list(" ^ string_of_typ t' ^ ")"
-  | TFun(t1, t2) -> "(" ^ string_of_typ t1 ^ " -> " ^ string_of_typ t2 ^ ")"
-  | TVar n -> "'a" ^ string_of_int n
+  | TList item -> string_of_typ item ^ " list"
+  | TFun (argument, result) ->
+      "(" ^ string_of_typ argument ^ " -> " ^ string_of_typ result ^ ")"
+  | TVar id -> "'a" ^ string_of_int id
 
-let infer_expr env e =
-  let s, t = w env e in
-  apply_subst s t
+let type_en_str = string_of_typ
 
-(* Gestion des définitions globales *)
-let rec w_global (env : env) (defs : (ident * expr) list) : env =
-  match defs with
+let rec ftv = function
+  | TInt | TBool | TUnit -> []
+  | TList item -> ftv item
+  | TFun (argument, result) -> union (ftv argument) (ftv result)
+  | TVar id -> [id]
+
+let rec apply_subst subst typ =
+  match typ with
+  | TInt | TBool | TUnit -> typ
+  | TList item -> TList (apply_subst subst item)
+  | TFun (argument, result) ->
+      TFun (apply_subst subst argument, apply_subst subst result)
+  | TVar id ->
+      (match List.assoc_opt id subst with
+       | None -> typ
+       | Some replacement -> apply_subst subst replacement)
+
+let compose_subst newer older =
+  let older = List.map (fun (id, typ) -> id, apply_subst newer typ) older in
+  older @ newer
+
+let ftv_scheme (Forall (bound, typ)) =
+  List.filter (fun id -> not (List.mem id bound)) (ftv typ)
+
+let ftv_env env =
+  List.fold_left (fun result (_, scheme) -> union result (ftv_scheme scheme)) [] env
+
+let apply_subst_scheme subst (Forall (bound, typ)) =
+  let subst = List.filter (fun (id, _) -> not (List.mem id bound)) subst in
+  Forall (bound, apply_subst subst typ)
+
+let apply_subst_env subst env =
+  List.map (fun (name, scheme) -> name, apply_subst_scheme subst scheme) env
+
+let generalize env typ =
+  let env_variables = ftv_env env in
+  let variables = List.filter (fun id -> not (List.mem id env_variables)) (ftv typ) in
+  Forall (variables, typ)
+
+let instantiate (Forall (variables, typ)) =
+  let subst = List.map (fun id -> id, fresh_tyvar ()) variables in
+  apply_subst subst typ
+
+let rec unify left right =
+  match left, right with
+  | TInt, TInt | TBool, TBool | TUnit, TUnit -> []
+  | TList left, TList right -> unify left right
+  | TFun (left_arg, left_result), TFun (right_arg, right_result) ->
+      let first = unify left_arg right_arg in
+      let second =
+        unify (apply_subst first left_result) (apply_subst first right_result)
+      in
+      compose_subst second first
+  | TVar id, typ | typ, TVar id ->
+      if typ = TVar id then []
+      else if List.mem id (ftv typ) then
+        raise (TypeError ("type récursif impossible pour " ^ string_of_typ (TVar id)))
+      else [id, typ]
+  | _ ->
+      raise
+        (TypeError
+           ("types incompatibles : " ^ string_of_typ left ^ " et " ^ string_of_typ right))
+
+let lookup env name =
+  match List.assoc_opt name env with
+  | Some scheme -> instantiate scheme
+  | None -> raise (TypeError ("variable non déclarée : " ^ name))
+
+let merge_pattern_env left right =
+  List.fold_left
+    (fun result (name, scheme) ->
+      if List.mem_assoc name result then
+        raise (TypeError ("variable liée plusieurs fois dans un motif : " ^ name));
+      (name, scheme) :: result)
+    left right
+
+let rec infer_pattern pattern =
+  match pattern with
+  | PInt _ -> [], TInt, []
+  | PBool _ -> [], TBool, []
+  | PVar name ->
+      let typ = fresh_tyvar () in
+      [], typ, [name, Forall ([], typ)]
+  | PWildcard -> [], fresh_tyvar (), []
+  | PNil -> [], TList (fresh_tyvar ()), []
+  | PCons (head, tail) ->
+      let head_subst, head_type, head_env = infer_pattern head in
+      let tail_subst, tail_type, tail_env = infer_pattern tail in
+      let combined = compose_subst tail_subst head_subst in
+      let item_type = fresh_tyvar () in
+      let list_subst = unify (apply_subst combined tail_type) (TList item_type) in
+      let combined = compose_subst list_subst combined in
+      let head_subst =
+        unify (apply_subst combined head_type) (apply_subst combined item_type)
+      in
+      let subst = compose_subst head_subst combined in
+      let env =
+        merge_pattern_env
+          (apply_subst_env subst head_env)
+          (apply_subst_env subst tail_env)
+      in
+      subst, TList (apply_subst subst item_type), env
+
+let builtin_type = function
+  | "print_int" -> Some (TFun (TInt, TUnit))
+  | "print_bool" -> Some (TFun (TBool, TUnit))
+  | "print_newline" -> Some (TFun (TUnit, TUnit))
+  | _ -> None
+
+let rec w env expression =
+  match expression with
+  | Entier _ -> [], TInt
+  | Booleen _ -> [], TBool
+  | Unite -> [], TUnit
+  | Variable name ->
+      (match builtin_type name with
+       | Some typ -> [], typ
+       | None -> [], lookup env name)
+  | Liste expressions -> infer_list env expressions
+  | Cons (head, tail) ->
+      let head_subst, head_type = w env head in
+      let env = apply_subst_env head_subst env in
+      let tail_subst, tail_type = w env tail in
+      let subst = compose_subst tail_subst head_subst in
+      let item_type = fresh_tyvar () in
+      let list_subst = unify (apply_subst subst tail_type) (TList item_type) in
+      let subst = compose_subst list_subst subst in
+      let head_unify =
+        unify (apply_subst subst head_type) (apply_subst subst item_type)
+      in
+      let subst = compose_subst head_unify subst in
+      subst, TList (apply_subst subst item_type)
+  | Binop (operator, left, right) -> infer_binop env operator left right
+  | Unop (Non, expression) ->
+      let subst, typ = w env expression in
+      let bool_subst = unify (apply_subst subst typ) TBool in
+      let subst = compose_subst bool_subst subst in
+      subst, TBool
+  | Si (condition, then_branch, else_branch) ->
+      let condition_subst, condition_type = w env condition in
+      let bool_subst = unify (apply_subst condition_subst condition_type) TBool in
+      let subst = compose_subst bool_subst condition_subst in
+      let env = apply_subst_env subst env in
+      let then_subst, then_type = w env then_branch in
+      let subst = compose_subst then_subst subst in
+      (match else_branch with
+       | None ->
+           let unit_subst = unify (apply_subst subst then_type) TUnit in
+           let subst = compose_subst unit_subst subst in
+           subst, TUnit
+       | Some else_branch ->
+           let env = apply_subst_env subst env in
+           let else_subst, else_type = w env else_branch in
+           let subst = compose_subst else_subst subst in
+           let branch_subst =
+             unify (apply_subst subst then_type) (apply_subst subst else_type)
+           in
+           let subst = compose_subst branch_subst subst in
+           subst, apply_subst subst then_type)
+  | Let (recursive, bindings, body) -> infer_let env recursive bindings body
+  | Fonction (parameter, body) ->
+      let parameter_type = fresh_tyvar () in
+      let env = (parameter, Forall ([], parameter_type)) :: env in
+      let subst, body_type = w env body in
+      subst, TFun (apply_subst subst parameter_type, apply_subst subst body_type)
+  | Application (fn, argument) ->
+      let fn_subst, fn_type = w env fn in
+      let env = apply_subst_env fn_subst env in
+      let arg_subst, arg_type = w env argument in
+      let subst = compose_subst arg_subst fn_subst in
+      let result_type = fresh_tyvar () in
+      let call_subst =
+        unify
+          (apply_subst subst fn_type)
+          (TFun (apply_subst subst arg_type, result_type))
+      in
+      let subst = compose_subst call_subst subst in
+      subst, apply_subst subst result_type
+  | TantQue (condition, body) ->
+      let condition_subst, condition_type = w env condition in
+      let bool_subst = unify (apply_subst condition_subst condition_type) TBool in
+      let subst = compose_subst bool_subst condition_subst in
+      let env = apply_subst_env subst env in
+      let body_subst, body_type = w env body in
+      let subst = compose_subst body_subst subst in
+      let unit_subst = unify (apply_subst subst body_type) TUnit in
+      let subst = compose_subst unit_subst subst in
+      subst, TUnit
+  | Pour (name, first, last, body) ->
+      let first_subst, first_type = w env first in
+      let first_int = unify (apply_subst first_subst first_type) TInt in
+      let subst = compose_subst first_int first_subst in
+      let env = apply_subst_env subst env in
+      let last_subst, last_type = w env last in
+      let subst = compose_subst last_subst subst in
+      let last_int = unify (apply_subst subst last_type) TInt in
+      let subst = compose_subst last_int subst in
+      let env = (name, Forall ([], TInt)) :: apply_subst_env subst env in
+      let body_subst, body_type = w env body in
+      let subst = compose_subst body_subst subst in
+      let body_unit = unify (apply_subst subst body_type) TUnit in
+      let subst = compose_subst body_unit subst in
+      subst, TUnit
+  | Match (matched, cases) -> infer_match env matched cases
+  | Sequence expressions -> infer_sequence env expressions
+
+and infer_list env expressions =
+  let item_type = fresh_tyvar () in
+  let rec loop subst = function
+    | [] -> subst, TList (apply_subst subst item_type)
+    | expression :: rest ->
+        let current_env = apply_subst_env subst env in
+        let expression_subst, expression_type = w current_env expression in
+        let subst = compose_subst expression_subst subst in
+        let item_subst =
+          unify (apply_subst subst expression_type) (apply_subst subst item_type)
+        in
+        loop (compose_subst item_subst subst) rest
+  in
+  loop [] expressions
+
+and infer_binop env operator left right =
+  let left_subst, left_type = w env left in
+  let env = apply_subst_env left_subst env in
+  let right_subst, right_type = w env right in
+  let subst = compose_subst right_subst left_subst in
+  let require typ =
+    let left_required = unify (apply_subst subst left_type) typ in
+    let subst = compose_subst left_required subst in
+    let right_required = unify (apply_subst subst right_type) typ in
+    compose_subst right_required subst
+  in
+  match operator with
+  | Plus | Moins | Fois | Divise | Modulo -> require TInt, TInt
+  | Et | Ou -> require TBool, TBool
+  | Inf | Sup | Infegal | Supegal -> require TInt, TBool
+  | Egal ->
+      let equal_subst =
+        unify (apply_subst subst left_type) (apply_subst subst right_type)
+      in
+      let subst = compose_subst equal_subst subst in
+      (match apply_subst subst left_type with
+       | TInt | TBool -> subst, TBool
+       | typ ->
+           raise
+             (TypeError
+                ("l'égalité n'est prise en charge que pour int et bool, pas "
+                 ^ string_of_typ typ)))
+
+and infer_let env recursive bindings body =
+  if recursive then infer_recursive_let env bindings body
+  else
+    let rec infer_bindings subst inferred = function
+      | [] -> subst, List.rev inferred
+      | (name, expression) :: rest ->
+          let current_env = apply_subst_env subst env in
+          let expression_subst, expression_type = w current_env expression in
+          let subst = compose_subst expression_subst subst in
+          infer_bindings subst ((name, apply_subst subst expression_type) :: inferred) rest
+    in
+    let subst, inferred = infer_bindings [] [] bindings in
+    let base_env = apply_subst_env subst env in
+    let bound_env =
+      List.fold_left
+        (fun result (name, typ) ->
+          (name, generalize base_env (apply_subst subst typ)) :: result)
+        base_env inferred
+    in
+    let body_subst, body_type = w bound_env body in
+    let subst = compose_subst body_subst subst in
+    subst, apply_subst subst body_type
+
+and infer_recursive_let env bindings body =
+  let placeholders = List.map (fun (name, _) -> name, fresh_tyvar ()) bindings in
+  let recursive_env =
+    List.fold_left
+      (fun result (name, typ) -> (name, Forall ([], typ)) :: result)
+      env placeholders
+  in
+  let rec infer subst = function
+    | [] -> subst
+    | (name, expression) :: rest ->
+        let current_env = apply_subst_env subst recursive_env in
+        let expression_subst, expression_type = w current_env expression in
+        let subst = compose_subst expression_subst subst in
+        let expected = List.assoc name placeholders |> apply_subst subst in
+        let binding_subst = unify expected (apply_subst subst expression_type) in
+        infer (compose_subst binding_subst subst) rest
+  in
+  let subst = infer [] bindings in
+  let base_env = apply_subst_env subst env in
+  let bound_env =
+    List.fold_left
+      (fun result (name, typ) ->
+        let typ = apply_subst subst typ in
+        (name, generalize base_env typ) :: result)
+      base_env placeholders
+  in
+  let body_subst, body_type = w bound_env body in
+  let subst = compose_subst body_subst subst in
+  subst, apply_subst subst body_type
+
+and infer_match env matched cases =
+  let matched_subst, matched_type = w env matched in
+  let result_type = fresh_tyvar () in
+  let rec infer_cases subst = function
+    | [] -> subst, apply_subst subst result_type
+    | (pattern, branch) :: rest ->
+        let pattern_subst, pattern_type, pattern_env = infer_pattern pattern in
+        let subst = compose_subst pattern_subst subst in
+        let pattern_unify =
+          unify (apply_subst subst matched_type) (apply_subst subst pattern_type)
+        in
+        let subst = compose_subst pattern_unify subst in
+        let branch_env =
+          apply_subst_env subst pattern_env @ apply_subst_env subst env
+        in
+        let branch_subst, branch_type = w branch_env branch in
+        let subst = compose_subst branch_subst subst in
+        let result_unify =
+          unify (apply_subst subst result_type) (apply_subst subst branch_type)
+        in
+        infer_cases (compose_subst result_unify subst) rest
+  in
+  infer_cases matched_subst cases
+
+and infer_sequence env expressions =
+  let rec loop subst = function
+    | [] -> subst, TUnit
+    | [last] ->
+        let last_subst, last_type = w (apply_subst_env subst env) last in
+        let subst = compose_subst last_subst subst in
+        subst, apply_subst subst last_type
+    | expression :: rest ->
+        let expression_subst, _ = w (apply_subst_env subst env) expression in
+        loop (compose_subst expression_subst subst) rest
+  in
+  loop [] expressions
+
+let infer_expr env expression =
+  let subst, typ = w env expression in
+  apply_subst subst typ
+
+let rec w_global env definitions =
+  match definitions with
   | [] -> env
-  | (id, e) :: rest ->
-      let s, t = w env e in
-      let t = apply_subst s t in
-      let sch = generalize env t in
-      let env' = (id, sch) :: env in
-      w_global env' rest
+  | (name, expression) :: rest ->
+      let subst, typ = w env expression in
+      let env = apply_subst_env subst env in
+      let scheme = generalize env (apply_subst subst typ) in
+      w_global ((name, scheme) :: env) rest
 
-let infer_program (defs : (ident * expr) list) (main_expr : expr) : typ =
-  let global_env = w_global [] defs in
-  let s, t = w global_env main_expr in
-  apply_subst s t
+let infer_program definitions main_expression =
+  let global_env = w_global [] definitions in
+  infer_expr global_env main_expression
