@@ -14,4 +14,5 @@ let () =
     print_int i
   done;
   print_newline ();
-  print_int (head [9; 8])
+  print_int (head [9; 8]);
+  print_newline ()
